@@ -1,3 +1,4 @@
+require "pathname"
 
 class Index
   REGULAR_MODE = 0100644
@@ -29,7 +30,7 @@ class Index
       Entry.new(
           stat.ctime.to_i, stat.ctime.nsec,
           stat.mtime.to_i, stat.mtime.nsec,
-          stat.dev, stat.ino, mode, stat.gid, stat.size,
+          stat.dev, stat.ino, mode, stat.uid, stat.gid, stat.size,
           oid, flags, path
       )
     end
