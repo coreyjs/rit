@@ -1,0 +1,100 @@
+#!/usr/bin/env ruby
+
+require "fileutils"
+require "pathname"
+
+require_relative '../lib/workspace'
+require_relative '../lib/database'
+require_relative '../lib/entry'
+require_relative '../lib/index'
+require_relative '../lib/database/tree'
+require_relative '../lib/database/author'
+require_relative '../lib/database/commit'
+require_relative '../lib/refs'
+
+command = ARGV.shift
+
+case command
+when "init"
+  # Every process has a working directory, relative to which all paths
+  # are resolved
+  path = ARGV.fetch(0, Dir.getwd)
+
+  root_path = Pathname.new(File.expand_path(path))
+  git_path = root_path.join(".git")
+
+  ["objects", "refs"].each do |dir|
+    begin
+      FileUtils.mkdir_p(git_path.join(dir))
+    rescue Errno::EACCES => error
+      # Errno represents errors thrown by calls to the OS
+      $stderr.puts "fatal: #{error.message}"
+    end
+  end
+
+  puts "Initialized empty Rit respository in #{git_path}"
+  exit 0
+
+when "commit"
+  root_path = Pathname.new(Dir.getwd)
+  git_path = root_path.join(".git")
+  db_path = git_path.join("objects")
+
+  workspace = Workspace.new(root_path)
+  database  = Database.new(db_path)
+  refs      = Refs.new(git_path)
+
+
+  entries = workspace.list_files.map do |path|
+    data = workspace.read_file(path)
+    blob = Database::Blob.new(data)
+
+    database.store(blob)
+
+    stat = workspace.stat_file(path)
+    Entry.new(path, blob.oid, stat)
+  end
+  # tree = Tree.new(entries)
+  # database.store(tree)
+
+  root = Database::Tree.build(entries)
+  root.traverse {|tree| database.store(tree)}
+
+  parent    = refs.read_head
+  name      = ENV.fetch("GIT_AUTHOR_NAME")
+  email     = ENV.fetch("GIT_AUTHOR_EMAIL")
+  author    = Database::Author.new(name, email, Time.now)
+  message   = $stdin.read
+
+  commit = Database::Commit.new(parent, root.oid, author, message)
+  database.store(commit)
+  refs.update_head(commit.oid)
+
+  is_root = parent.nil? ? "(root-commit) " : ""
+
+  puts "[#{is_root}#{ commit.oid }] #{ message.lines.first }"
+  exit 0
+
+when "add"
+  root_path = Pathname.new(Dir.getwd)
+  git_path = root_path.join(".git")
+
+  workspace = Workspace.new(root_path)
+  database = Database.new(git_path.join("objects"))
+  index = Index.new(git_path.join("index"))
+
+  path = Pathname.new(ARGV.first)
+  data = workspace.read_file(path)
+  stat = workspace.stat_file(path)
+
+  blob = Database::Blob.new(data)
+  database.store(blob)
+  index.add(path, blob.oid, stat)
+
+  index.write_updates
+  exit 0
+
+else
+  $stderr.puts "rit '#{command}' is not a rit command"
+  exit 1
+end
